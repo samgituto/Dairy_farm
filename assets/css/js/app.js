@@ -1,8 +1,7 @@
-document.addEventListener("DOMContentLoaded", function () {
-
+document.addEventListener("DOMContentLoaded", e => {
     const dropdownBtns =
         document.querySelectorAll(".dropdown-btn");
-
+    console.log(dropdownBtns);
     dropdownBtns.forEach(btn => {
 
         btn.addEventListener("click", function () {
@@ -15,10 +14,6 @@ document.addEventListener("DOMContentLoaded", function () {
         });
 
     });
-
-});
-document.addEventListener("DOMContentLoaded", function(){
-
     const dropdowns =
     document.querySelectorAll(".dropdown-btn");
 
@@ -31,5 +26,4 @@ document.addEventListener("DOMContentLoaded", function(){
         });
 
     });
-
 });

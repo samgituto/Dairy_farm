@@ -22,7 +22,7 @@ $conn,
 "SELECT
 SUM(current_stock) AS total_stock
 
-FROM feed_ingredients"
+FROM inventory"
 
 );
 

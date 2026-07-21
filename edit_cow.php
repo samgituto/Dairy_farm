@@ -9,7 +9,6 @@ mysqli_query(
 $conn,
 "SELECT * FROM cows WHERE id='$id'"
 );
-
 $cow =
 mysqli_fetch_assoc($result);
 

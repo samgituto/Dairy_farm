@@ -9,12 +9,6 @@ if (!isset($_SESSION['user_id'])) {
 
 include 'includes/db.php';
 
-/*
-|--------------------------------------------------------------------------
-| Dashboard Statistics
-|--------------------------------------------------------------------------
-*/
-
 // Total Herd
 $totalHerdResult = mysqli_query(
     $conn,
@@ -30,7 +24,23 @@ $lactatingResult = mysqli_query(
      WHERE status='Lactating'"
 );
 $lactating = mysqli_fetch_assoc($lactatingResult);
+/* ============================================================
+   DASHBOARD LOW STOCK ALERTS
+============================================================ */
 
+$dashboardLowStockItems = mysqli_query($conn, "
+    SELECT
+        item_name,
+        category,
+        unit,
+        SUM(quantity) AS current_stock,
+        MAX(reorder_level) AS reorder_level
+    FROM inventory
+    GROUP BY item_name, category, unit
+    HAVING current_stock <= reorder_level
+    ORDER BY current_stock ASC
+    LIMIT 4
+");
 // Today's Milk Production
 $milkTodayResult = mysqli_query(
     $conn,
@@ -40,32 +50,56 @@ $milkTodayResult = mysqli_query(
 );
 $milkToday = mysqli_fetch_assoc($milkTodayResult);
 
-// AI Alert Logic: if today's production is below the average of the previous 5 days
+// AI Alert Logic per individual cow: flag cows whose today's production is below their 5-day average
 $aiAlert = false;
 $aiAlertMessage = '';
 
-$avg5DaysResult = mysqli_query(
+$perCowQuery = mysqli_query(
     $conn,
-    "SELECT AVG(day_total) AS avg_total FROM (
-        SELECT SUM(litres) AS day_total
-        FROM milk_records
-        WHERE record_date >= DATE_SUB(CURDATE(), INTERVAL 5 DAY)
-          AND record_date < CURDATE()
-        GROUP BY record_date
-    ) t"
+    "SELECT
+        c.id AS cow_id,
+        c.cow_name,
+        COALESCE(t.today_total,0) AS today_total,
+        COALESCE(a.avg_total,0) AS avg_total
+     FROM cows c
+     LEFT JOIN (
+         SELECT cow_id, SUM(litres) AS today_total
+         FROM milk_records
+         WHERE record_date = CURDATE()
+         GROUP BY cow_id
+     ) t ON t.cow_id = c.id
+     LEFT JOIN (
+         SELECT cow_id, AVG(day_total) AS avg_total FROM (
+             SELECT cow_id, record_date, SUM(litres) AS day_total
+             FROM milk_records
+             WHERE record_date >= DATE_SUB(CURDATE(), INTERVAL 5 DAY)
+               AND record_date < CURDATE()
+             GROUP BY cow_id, record_date
+         ) s
+         GROUP BY cow_id
+     ) a ON a.cow_id = c.id"
 );
-$avg5DaysRow = mysqli_fetch_assoc($avg5DaysResult);
-$avg5Days = (float)($avg5DaysRow['avg_total'] ?? 0);
 
-$todayProduction = (float)($milkToday['total'] ?? 0);
+$alerts = [];
 
-if ($avg5Days > 0 && $todayProduction < $avg5Days) {
-    $aiAlert = true;
-    $aiAlertMessage = sprintf(
-        "AI Alert: Today\'s milk production (%.1f L) is below the 5-day average (%.1f L).",
-        $todayProduction,
-        $avg5Days
-    );
+while ($cow = mysqli_fetch_assoc($perCowQuery)) {
+    $avg = (float)$cow['avg_total'];
+    $today = (float)$cow['today_total'];
+
+    if ($avg > 0 && $today < $avg) {
+        $aiAlert = true;
+        $alerts[] = sprintf(
+            "Today's %s production is %.1f L which is below the 5-day average %.1f L check for health or feed issues.",
+            $cow['cow_name'],
+            $today,
+            $avg
+        );
+    }
+}
+
+if ($aiAlert) {
+    // join alerts for display; separated by " | "
+    $aiAlertMessage = implode(' | ', $alerts);
 }
 
 
@@ -222,11 +256,16 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
                 Welcome,
                 <?= $_SESSION['full_name']; ?>
             </h1>
-
+        <div class="dashboard-role-box">
+        <span class="dashboard-role-text">
+            Role: <?= htmlspecialchars($currentRole); ?>
+        </span>
+    </div>
             <p>
-                <?= date("l, d F Y"); ?>
-            </p>
-
+                <?= date("l, d F Y"); ?> 
+                
+            </p> 
+        </small>
         </div>
 
     </div>
@@ -291,7 +330,126 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
         </div>
 
     </div>
+<!-- AI Insights -->
 
+<div class="ai-card" style="background:#ffffff; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,0.06); padding:18px; margin-bottom:20px; border:1px solid #eee; max-width:100%;">
+
+    <h3 style="display:flex; align-items:center; gap:10px; margin:0 0 10px 0; font-size:1.05rem;">
+        <span style="font-size:1.2rem; line-height:1;">🤖</span>
+        AI Farm Insights
+    </h3>
+
+    <?php if (!empty($aiAlert)): ?>
+        <div role="alert" aria-live="polite" style="background:#fff8e1; border-left:5px solid #ffecb3; padding:12px; border-radius:6px; margin-bottom:12px; color:#5a4a00;">
+            <?php $count = isset($alerts) ? count($alerts) : 0; ?>
+            <?php if ($count > 1): ?>
+                <strong style="display:block; margin-bottom:8px; color:#5a4a00;"><?= $count; ?> alerts found — check these cows:</strong>
+                <ul style="margin:0; padding-left:18px; color:#5a4a00;">
+                    <?php foreach ($alerts as $a): ?>
+                        <li><?= htmlspecialchars($a, ENT_QUOTES, 'UTF-8'); ?></li>
+                    <?php endforeach; ?>
+                </ul>
+            <?php else: ?>
+                <span><?= htmlspecialchars($aiAlertMessage, ENT_QUOTES, 'UTF-8'); ?></span>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
+
+    <p style="margin:0; color:#555; line-height:1.45;">
+        Our AI monitors milk-production trends and highlights cows whose today's yield is below their 5-day average. Use these insights to check health, feed, or milking issues early.
+    </p>
+</div>
+<!-- ==========================================================
+     LOW STOCK ALERT CARDS
+========================================================== -->
+
+<div class="dashboard-low-stock-section">
+
+    <div class="section-header">
+
+        <div>
+            <h2>
+                <i class="fas fa-exclamation-triangle"></i>
+                Low Stock Alerts
+            </h2>
+
+            <p>
+                Items whose quantity is below or equal to reorder level.
+            </p>
+        </div>
+
+        <a href="inventory.php" class="btn btn-primary">
+            <i class="fas fa-warehouse"></i>
+            View Inventory
+        </a>
+
+    </div>
+
+
+    <div class="dashboard-low-stock-grid">
+
+        <?php if (mysqli_num_rows($dashboardLowStockItems) > 0) { ?>
+
+            <?php while ($item = mysqli_fetch_assoc($dashboardLowStockItems)) { ?>
+
+                <div class="dashboard-low-stock-card">
+
+                    <div class="low-stock-danger-icon">
+                        <i class="fas fa-exclamation-triangle"></i>
+                    </div>
+
+                    <h4>
+                        <?= htmlspecialchars($item['item_name']); ?>
+                    </h4>
+
+                    <p>
+                        Category:
+                        <strong>
+                            <?= htmlspecialchars($item['category']); ?>
+                        </strong>
+                    </p>
+
+                    <p>
+                        Current Stock:
+                        <strong>
+                            <?= number_format($item['current_stock'], 2); ?>
+                            <?= htmlspecialchars($item['unit']); ?>
+                        </strong>
+                    </p>
+
+                    <p>
+                        Reorder Level:
+                        <strong>
+                            <?= number_format($item['reorder_level'], 2); ?>
+                            <?= htmlspecialchars($item['unit']); ?>
+                        </strong>
+                    </p>
+
+                </div>
+
+            <?php } ?>
+
+        <?php } else { ?>
+
+            <div class="dashboard-safe-stock-card">
+
+                <div class="safe-stock-icon">
+                    <i class="fas fa-check-circle"></i>
+                </div>
+
+                <h4>No Low Stock Alerts</h4>
+
+                <p>
+                    All inventory items are above reorder level.
+                </p>
+
+            </div>
+
+        <?php } ?>
+
+    </div>
+
+</div>
     <!-- Weekly Production Chart -->
 
     <div class="chart-card">
@@ -460,41 +618,7 @@ href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
 
     </div>
 
-    <!-- AI Insights -->
-
-    <div class="ai-card">
-
-        <h3>🤖 AI Farm Insights</h3>
-
-        <?php if (!empty($aiAlert)): ?>
-            <div class="alert alert-warning" role="alert" style="margin-bottom: 15px;">
-                <?= htmlspecialchars($aiAlertMessage, ENT_QUOTES, 'UTF-8'); ?>
-            </div>
-        <?php endif; ?>
-
-        <ul>
-
-
-            <li>
-                Monitor cows with declining milk production.
-            </li>
-
-            <li>
-                Review vaccination schedules weekly.
-            </li>
-
-            <li>
-                Prepare maternity pens for expected calvings.
-            </li>
-
-            <li>
-                Feed and inventory analytics will appear in Phase 5.
-            </li>
-
-        </ul>
-
-    </div>
-
+   
 </div>
 
 <script>

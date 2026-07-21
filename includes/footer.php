@@ -6,9 +6,10 @@
         <div class="footer-content">
 
             <p>
-                © <?php echo date('Y'); ?>
                 Dairy Farm Management System |
-                All Rights Reserved
+                An AI Powered Solution for Efficient Running of Dairy Farm Operations.
+                |
+                <?php echo date('d-m-Y'); ?>
             </p>
 
         </div>

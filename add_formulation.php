@@ -1,5 +1,172 @@
 <?php
+session_start();
+
 include 'includes/db.php';
+
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
+}
+
+$message = "";
+
+
+/* ============================================================
+   LOAD INVENTORY ITEM NAMES FOR AUTOCOMPLETE
+============================================================ */
+
+$ingredientQuery = mysqli_query($conn, "
+    SELECT DISTINCT item_name
+    FROM inventory
+    ORDER BY item_name ASC
+");
+
+
+/* ============================================================
+   SAVE FORMULATION
+============================================================ */
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+
+    $formulation_no = "FML-" . date("YmdHis") . rand(10, 99);
+
+    $formulation_name = mysqli_real_escape_string(
+        $conn,
+        $_POST['formulation_name']
+    );
+
+    $feed_category = mysqli_real_escape_string(
+        $conn,
+        $_POST['feed_category']
+    );
+
+    $notes = mysqli_real_escape_string(
+        $conn,
+        $_POST['notes']
+    );
+
+    $created_by = $_SESSION['full_name']
+        ?? $_SESSION['username']
+        ?? 'System';
+
+    $ingredient_names = $_POST['ingredient_name'] ?? [];
+    $units = $_POST['unit'] ?? [];
+    $quantities = $_POST['qty_per_cow_per_day'] ?? [];
+
+
+    /* ========================================================
+       VALIDATION
+    ======================================================== */
+
+    if ($formulation_name === "" || $feed_category === "") {
+
+        $message = "Formulation name and feed category are required.";
+
+    } elseif (count($ingredient_names) === 0) {
+
+        $message = "Please add at least one ingredient.";
+
+    } else {
+
+        mysqli_begin_transaction($conn);
+
+        try {
+
+            /* =================================================
+               INSERT FORMULATION
+            ================================================= */
+
+            $formulationSql = "
+                INSERT INTO feed_formulations (
+                    formulation_no,
+                    formulation_name,
+                    feed_category,
+                    notes,
+                    created_by
+                )
+                VALUES (
+                    '$formulation_no',
+                    '$formulation_name',
+                    '$feed_category',
+                    '$notes',
+                    '$created_by'
+                )
+            ";
+
+            if (!mysqli_query($conn, $formulationSql)) {
+                throw new Exception(mysqli_error($conn));
+            }
+
+            $formulation_id = mysqli_insert_id($conn);
+
+            $validRows = 0;
+
+
+            /* =================================================
+               INSERT FORMULATION INGREDIENTS
+            ================================================= */
+
+            for ($i = 0; $i < count($ingredient_names); $i++) {
+
+                $ingredient_name = trim($ingredient_names[$i] ?? "");
+                $unit = trim($units[$i] ?? "");
+                $qty = (float) ($quantities[$i] ?? 0);
+
+                if ($ingredient_name === "" || $unit === "" || $qty <= 0) {
+                    continue;
+                }
+
+                $ingredient_name = mysqli_real_escape_string(
+                    $conn,
+                    $ingredient_name
+                );
+
+                $unit = mysqli_real_escape_string(
+                    $conn,
+                    $unit
+                );
+
+                $itemSql = "
+                    INSERT INTO feed_formulation_items (
+                        formulation_id,
+                        ingredient_name,
+                        unit,
+                        qty_per_cow_per_day
+                    )
+                    VALUES (
+                        '$formulation_id',
+                        '$ingredient_name',
+                        '$unit',
+                        '$qty'
+                    )
+                ";
+
+                if (!mysqli_query($conn, $itemSql)) {
+                    throw new Exception(mysqli_error($conn));
+                }
+
+                $validRows++;
+            }
+
+            if ($validRows === 0) {
+                throw new Exception("Please add at least one valid ingredient row.");
+            }
+
+            mysqli_commit($conn);
+
+            header("Location: formulations.php?success=1");
+            exit();
+
+        } catch (Exception $e) {
+
+            mysqli_rollback($conn);
+
+            $message = "Error: " . $e->getMessage();
+        }
+    }
+}
+
+
 include 'includes/header.php';
 include 'includes/sidebar.php';
 ?>
@@ -7,77 +174,186 @@ include 'includes/sidebar.php';
 <div class="main-content">
 
     <div class="page-header">
-        <h1>Create Feed Formulation</h1>
+
+        <div>
+            <h1>
+                <i class="fas fa-blender"></i>
+                Add Feed Formulation
+            </h1>
+
+            <p>
+                Create feed formulations for lactating, pregnant, bull, calf, dry, and heifer categories.
+            </p>
+        </div>
+
+        <div>
+            <a href="formulations.php" class="btn btn-primary">
+                <i class="fas fa-list"></i>
+                View Formulations
+            </a>
+        </div>
+
     </div>
 
-    <div class="formulation-card">
 
-        <form action="save_formulation.php" method="POST">
+    <?php if ($message !== "") { ?>
+
+        <div class="alert alert-danger">
+            <?= htmlspecialchars($message); ?>
+        </div>
+
+    <?php } ?>
+
+
+    <form method="POST" action="add_formulation.php">
+
+        <div class="form-card">
+
+            <h3>
+                <i class="fas fa-clipboard-list"></i>
+                Formulation Details
+            </h3>
 
             <div class="form-grid">
 
                 <div class="form-group">
-                    <label>Formula Code</label>
-                    <input type="text" name="formula_code" required>
+
+                    <label>Formulation Name</label>
+
+                    <input
+                        type="text"
+                        name="formulation_name"
+                        class="form-control"
+                        placeholder="Example: Lactating Cow Dairy Meal Mix"
+                        required>
+
                 </div>
 
-                <div class="form-group">
-                    <label>Formula Name</label>
-                    <input type="text" name="formula_name" required>
-                </div>
 
                 <div class="form-group">
-                    <label>Animal Category</label>
 
-                    <select name="animal_category" id="animal_category" required>
+                    <label>Feed Category</label>
+
+                    <select name="feed_category" class="form-control" required>
 
                         <option value="">Select Category</option>
-
-                        <option value="Milking Cow">
-                            Milking Cow
-                        </option>
-
-                        <option value="Heifer">
-                            Heifer
-                        </option>
-
-                        <option value="Bull">
-                            Bull
-                        </option>
-
-                        <option value="Young Calf">
-                            Young Calf
-                        </option>
+                        <option value="Lactating">Lactating</option>
+                        <option value="Pregnant">Pregnant</option>
+                        <option value="Bull">Bull</option>
+                        <option value="Calf">Calf</option>
+                        <option value="Dry">Dry</option>
+                        <option value="Heifer">Heifer</option>
 
                     </select>
 
                 </div>
 
-                <div class="form-group">
-                    <label>Batch Size (Kg)</label>
-                    <input type="number"
-                           name="batch_size"
-                           value="1000"
-                           required>
+
+                <div class="form-group" style="grid-column: 1 / -1;">
+
+                    <label>Notes</label>
+
+                    <textarea
+                        name="notes"
+                        class="form-control"
+                        rows="3"
+                        placeholder="Optional notes about the formulation"></textarea>
+
                 </div>
 
             </div>
 
-            <div class="table-card">
+        </div>
 
-                <h2>Ingredients</h2>
+
+        <div class="table-card">
+
+            <div class="table-header">
+
+                <h3>
+                    <i class="fas fa-seedling"></i>
+                    Ingredients
+                </h3>
+
+                <button
+                    type="button"
+                    class="btn btn-success"
+                    onclick="addIngredientRow()">
+                    <i class="fas fa-plus"></i>
+                    Add Ingredient
+                </button>
+
+            </div>
+
+
+            <datalist id="ingredientSuggestions">
+
+                <?php while ($item = mysqli_fetch_assoc($ingredientQuery)) { ?>
+
+                    <option value="<?= htmlspecialchars($item['item_name']); ?>">
+
+                <?php } ?>
+
+            </datalist>
+
+
+            <div class="table-responsive">
 
                 <table class="custom-table">
 
                     <thead>
                         <tr>
-                            <th>Ingredient</th>
-                            <th>Percentage (%)</th>
-                            <th>Weight (Kg)</th>
+                            <th>Ingredient Name</th>
+                            <th>Unit</th>
+                            <th>Qty per Cow per Day</th>
+                            <th>Action</th>
                         </tr>
                     </thead>
 
-                    <tbody id="ingredientTable">
+                    <tbody id="ingredientTableBody">
+
+                        <tr>
+
+                            <td>
+                                <input
+                                    type="text"
+                                    name="ingredient_name[]"
+                                    class="form-control"
+                                    list="ingredientSuggestions"
+                                    placeholder="Type ingredient name"
+                                    required>
+                            </td>
+
+                            <td>
+                                <select name="unit[]" class="form-control" required>
+                                    <option value="Kg">Kg</option>
+                                    <option value="L">L</option>
+                                    <option value="g">g</option>
+                                </select>
+                            </td>
+
+                            <td>
+                                <input
+                                    type="number"
+                                    step="0.001"
+                                    min="0"
+                                    name="qty_per_cow_per_day[]"
+                                    class="form-control"
+                                    placeholder="Example: 2.5"
+                                    required>
+                            </td>
+
+                            <td>
+                                <button
+                                    type="button"
+                                    class="btn btn-danger"
+                                    onclick="removeIngredientRow(this)">
+                                    <i class="fas fa-trash"></i>
+                                    Remove
+                                </button>
+                            </td>
+
+                        </tr>
 
                     </tbody>
 
@@ -85,117 +361,89 @@ include 'includes/sidebar.php';
 
             </div>
 
-            <button class="btn-primary">
+        </div>
+
+
+        <div class="form-actions">
+
+            <button type="submit" class="btn btn-success">
+                <i class="fas fa-save"></i>
                 Save Formulation
             </button>
 
-        </form>
+            <a href="formulations.php" class="btn btn-secondary">
+                Cancel
+            </a>
 
-    </div>
+        </div>
+
+    </form>
 
 </div>
 
+
 <script>
+function addIngredientRow() {
 
-const formulations = {
+    const tbody = document.getElementById("ingredientTableBody");
 
-"Milking Cow":[
+    const row = document.createElement("tr");
 
-["Corn Silage",59.5,25],
-["Alfalfa Hay",11.9,5],
-["Crushed Maize",14.3,6],
-["Soybean Meal",9.5,4],
-["Wheat Bran",3.6,1.5],
-["Limestone Powder",0.5,0.2],
-["Salt",0.7,0.3]
+    row.innerHTML = `
+        <td>
+            <input
+                type="text"
+                name="ingredient_name[]"
+                class="form-control"
+                list="ingredientSuggestions"
+                placeholder="Type ingredient name"
+                required>
+        </td>
 
-],
+        <td>
+            <select name="unit[]" class="form-control" required>
+                <option value="Kg">Kg</option>
+                <option value="L">L</option>
+                <option value="g">g</option>
+            </select>
+        </td>
 
-"Heifer":[
+        <td>
+            <input
+                type="number"
+                step="0.001"
+                min="0"
+                name="qty_per_cow_per_day[]"
+                class="form-control"
+                placeholder="Example: 2.5"
+                required>
+        </td>
 
-["Napier Grass",54.1,10],
-["Maize Straw",27.0,5],
-["Crushed Maize",8.1,1.5],
-["Cottonseed Meal",5.4,1],
-["Rice Bran",4.3,0.8],
-["Mineral Premix",1.1,0.2]
+        <td>
+            <button
+                type="button"
+                class="btn btn-danger"
+                onclick="removeIngredientRow(this)">
+                <i class="fas fa-trash"></i>
+                Remove
+            </button>
+        </td>
+    `;
 
-],
-
-"Bull":[
-
-["Alfalfa Hay",32.7,8],
-["Corn Silage",40.8,10],
-["Crushed Maize",16.3,4],
-["Soybean Meal",6.1,1.5],
-["Wheat Bran",3.3,0.8],
-["Minerals",0.8,0.2]
-
-],
-
-"Young Calf":[
-
-["Fine Alfalfa Hay",14.9,0.7],
-["Ground Maize",46.8,2.2],
-["Soybean Meal",25.5,1.2],
-["Wheat Bran",10.6,0.5],
-["DCP",1.1,0.05],
-["Salt Premix",1.1,0.05]
-
-]
-
-};
-
-document.getElementById("animal_category")
-.addEventListener("change", function(){
-
-let category = this.value;
-
-let tbody = document.getElementById("ingredientTable");
-
-tbody.innerHTML="";
-
-if(formulations[category]){
-
-formulations[category].forEach((item,index)=>{
-
-tbody.innerHTML += `
-
-<tr>
-
-<td>
-${item[0]}
-<input type="hidden"
-name="ingredient_name[]"
-value="${item[0]}">
-</td>
-
-<td>
-<input type="number"
-step="0.01"
-name="percentage[]"
-value="${item[1]}"
-readonly>
-</td>
-
-<td>
-<input type="number"
-step="0.01"
-name="weight[]"
-value="${item[2]}"
-readonly>
-</td>
-
-</tr>
-
-`;
-
-});
-
+    tbody.appendChild(row);
 }
 
-});
 
+function removeIngredientRow(button) {
+
+    const tbody = document.getElementById("ingredientTableBody");
+
+    if (tbody.rows.length > 1) {
+        button.closest("tr").remove();
+    } else {
+        alert("At least one ingredient row is required.");
+    }
+}
 </script>
 
 <?php include 'includes/footer.php'; ?>
