@@ -71,17 +71,7 @@ function checkLowStockAndSendSMS($conn)
            SMS MESSAGE
         ==================================================== */
 
-        $message = "LOW STOCK ALERT: " .
-            $row['item_name'] .
-            " is below reorder level. Current stock: " .
-            number_format($current_stock, 2) .
-            " " .
-            $row['unit'] .
-            ". Reorder level: " .
-            number_format($reorder_level, 2) .
-            " " .
-            $row['unit'] .
-            ".";
+        $message = "Stock levels are down , check and restock";
 
 
         /* ====================================================
