@@ -1,35 +1,32 @@
 <?php
 
 require_once __DIR__ . '/../vendor/autoload.php';
-require_once __DIR__ . '/sms_config.php';
+require_once __DIR__ . '/twilio_config.php';
 
-use AfricasTalking\SDK\AfricasTalking;
-
+use Twilio\Rest\Client;
 
 /* ============================================================
-   SEND SMS FUNCTION
+   SEND SMS FUNCTION (TWILIO)
 ============================================================ */
 
 function sendSMS($phoneNumber, $message)
 {
     try {
 
-        $AT = new AfricasTalking(
-            AT_USERNAME,
-            AT_API_KEY
+        $client = new Client(TWILIO_SID, TWILIO_AUTH_TOKEN);
+
+        $result = $client->messages->create(
+            $phoneNumber,
+            [
+                'from' => TWILIO_FROM_NUMBER,
+                'body' => $message
+            ]
         );
-
-        $sms = $AT->sms();
-
-        $result = $sms->send([
-            'to' => [$phoneNumber],
-            'message' => $message
-        ]);
 
         return [
             'status' => true,
             'message' => 'SMS sent successfully.',
-            'response' => $result
+            'response' => $result->sid
         ];
 
     } catch (Exception $e) {
